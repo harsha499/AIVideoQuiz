@@ -210,17 +210,19 @@ let state = {
     {
       videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
       prompt: 'DEMO ROUND — replace this with a real AI-generated clip URL and its exact source prompt before running the session.',
-      tag: 'DEMO'
+      tag: 'DEMO',
+      mode: 'auto'
     },
     {
       videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
       prompt: 'DEMO ROUND — replace this with a real AI-generated clip URL and its exact source prompt before running the session.',
-      tag: 'DEMO'
+      tag: 'DEMO',
+      mode: 'auto'
     }
   ],
   currentRound: 0,
   scores: [],       // running totals per team
-  guesses: [],       // guesses[roundIndex][teamIndex] = string
+  guesses: [],       // guesses[roundIndex][teamIndex] = {text, locked}
   revealResults: null, // {scores:[{points,feedback}], } for current round
   timeLeft: 0,
   timerHandle: null
@@ -236,6 +238,21 @@ function youTubeEmbed(url){
   const m2 = url.match(/youtu\.be\/([^?&]+)/);
   if (m1) id = m1[1]; else if (m2) id = m2[1];
   return 'https://www.youtube.com/embed/' + id;
+}
+function isGoogleDrive(url){
+  return /drive\.google\.com/i.test(url);
+}
+function googleDriveEmbed(url){
+  const m = url.match(/\/d\/([^/]+)/) || url.match(/[?&]id=([^&]+)/);
+  const id = m ? m[1] : '';
+  return 'https://drive.google.com/file/d/' + id + '/preview';
+}
+function videoKind(url, mode){
+  if (mode && mode !== 'auto') return mode;
+  if (isYouTube(url)) return 'youtube';
+  if (isGoogleDrive(url)) return 'drive';
+  if (/\.(mp4|webm|ogg|mov)(\?|$)/i.test(url)) return 'direct';
+  return 'iframe';
 }
 
 function wordOverlapScore(guess, actual){
@@ -302,9 +319,25 @@ function renderSetup(){
       </div>
       <div class="fields">
         <div>
-          <label>Video URL (direct .mp4 link or YouTube link)</label>
+          <label>Video URL (any link — direct .mp4, YouTube, Google Drive, or a webpage to embed)</label>
           <input type="text" value="${escapeAttr(r.videoUrl)}" onchange="updateRound(${i}, 'videoUrl', this.value)">
         </div>
+        <div class="row">
+          <div>
+            <label>Embed mode</label>
+            <select onchange="updateRound(${i}, 'mode', this.value)">
+              <option value="auto" ${r.mode==='auto'?'selected':''}>Auto-detect</option>
+              <option value="direct" ${r.mode==='direct'?'selected':''}>Direct video file (.mp4 etc.)</option>
+              <option value="youtube" ${r.mode==='youtube'?'selected':''}>YouTube</option>
+              <option value="drive" ${r.mode==='drive'?'selected':''}>Google Drive</option>
+              <option value="iframe" ${r.mode==='iframe'?'selected':''}>Generic webpage (iframe)</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:flex-end;">
+            <button class="ghost" type="button" onclick="togglePreview(${i})">${r.previewOpen ? 'Hide preview' : 'Preview this round'}</button>
+          </div>
+        </div>
+        ${r.previewOpen ? `<div class="video-frame" data-tag="PREVIEW">${embedHtml(r)}</div>` : ''}
         <div>
           <label>Exact source prompt used to generate this clip</label>
           <textarea onchange="updateRound(${i}, 'prompt', this.value)">${escapeHtml(r.prompt)}</textarea>
@@ -341,7 +374,7 @@ function renderSetup(){
       <h2>Rounds</h2>
       ${roundsCards}
       <button class="ghost" onclick="addRound()">+ Add round</button>
-      <p class="hint">The two demo rounds use placeholder stock clips so you can test the flow. Replace the video URL and prompt on each with a real AI-generated clip (from a source like Sora, Runway, Kling or Pika) and the exact prompt used, before running a live session.</p>
+      <p class="hint">The two demo rounds use placeholder stock clips so you can test the flow. Replace the video URL and prompt on each with a real AI-generated clip and the exact prompt used, before running a live session. Use "Preview this round" to check playback before you go live.<br><br>Auto-detect handles direct .mp4 links, YouTube, and Google Drive automatically. If a link doesn't play, force it with the Embed mode dropdown — "Generic webpage" will try to load any URL in an iframe. Note: some sites block being embedded this way (their own security settings, nothing this tool can override) — if that happens, download the file and upload it somewhere that serves direct .mp4 links (e.g. Drive, Dropbox, or your team's file storage), since a direct video file is the most reliable option.<br><br>For Google Drive: sharing must be set to "Anyone with the link."<br><br><strong>Important:</strong> for the AI-powered scoring to work, open this file through Claude's artifact preview rather than double-clicking the downloaded file on your desktop — browsers block the scoring API call when a page is opened directly from disk (file://). If you do run it locally, scoring still works via a keyword-overlap fallback, just less accurately.</p>
     </div>
 
     <div class="footer-actions">
@@ -363,15 +396,25 @@ function removeTeam(){
 function updateTeamName(i, val){ state.teams[i] = val || state.teams[i]; }
 
 function addRound(){
-  state.rounds.push({videoUrl:'', prompt:'', tag:''});
+  state.rounds.push({videoUrl:'', prompt:'', tag:'', mode:'auto'});
   render();
 }
 function removeRound(i){ state.rounds.splice(i,1); render(); }
 function updateRound(i, field, val){ state.rounds[i][field] = val; }
+function togglePreview(i){ state.rounds[i].previewOpen = !state.rounds[i].previewOpen; render(); }
+
+function embedHtml(r){
+  const kind = videoKind(r.videoUrl, r.mode);
+  if (!r.videoUrl) return '<div style="padding:40px;text-align:center;color:var(--text-dim);font-family:\'IBM Plex Mono\',monospace;font-size:13px;">No video URL yet</div>';
+  if (kind === 'youtube') return `<iframe src="${escapeAttr(youTubeEmbed(r.videoUrl))}" frameborder="0" allow="autoplay" allowfullscreen></iframe>`;
+  if (kind === 'drive') return `<iframe src="${escapeAttr(googleDriveEmbed(r.videoUrl))}" frameborder="0" allow="autoplay" allowfullscreen></iframe>`;
+  if (kind === 'iframe') return `<iframe src="${escapeAttr(r.videoUrl)}" frameborder="0" allow="autoplay" allowfullscreen></iframe>`;
+  return `<video src="${escapeAttr(r.videoUrl)}" controls></video>`;
+}
 
 function startGame(){
   state.scores = state.teams.map(() => 0);
-  state.guesses = state.rounds.map(() => state.teams.map(() => ''));
+  state.guesses = state.rounds.map(() => state.teams.map(() => ({text:'', locked:false})));
   state.currentRound = 0;
   goToRound();
 }
@@ -406,25 +449,24 @@ function renderRound(){
   const r = state.rounds[state.currentRound];
   const scoresStr = state.teams.map((t,i) => t + ': <b>' + state.scores[i] + '</b>').join(' &nbsp;·&nbsp; ');
 
-  const videoHtml = isYouTube(r.videoUrl)
-    ? `<iframe src="${escapeAttr(youTubeEmbed(r.videoUrl))}" frameborder="0" allow="autoplay" allowfullscreen></iframe>`
-    : `<video src="${escapeAttr(r.videoUrl)}" controls></video>`;
+  const videoHtml = embedHtml(r);
 
   const guessBlocks = state.teams.map((t,i) => {
-    const val = state.guesses[state.currentRound][i];
-    const locked = val !== '' && val !== undefined && guessLocked(state.currentRound, i);
+    const g = state.guesses[state.currentRound][i];
     return `
       <div class="guess-block">
         <div class="team-name">${escapeHtml(t)}</div>
-        ${locked
-          ? `<div class="locked">Guess submitted ✓</div>`
+        ${g.locked
+          ? `<div class="locked">Guess submitted ✓ — "${escapeHtml(g.text)}"</div>`
           : `<div class="guess-row">
-               <textarea id="guess-${i}" placeholder="Type the prompt you think created this clip...">${escapeHtml(val||'')}</textarea>
+               <textarea id="guess-${i}" placeholder="Type the prompt you think created this clip...">${escapeHtml(g.text)}</textarea>
                <button onclick="submitGuess(${i})">Submit</button>
              </div>`}
       </div>
     `;
   }).join('');
+
+  const allLocked = state.guesses[state.currentRound].every(g => g.locked);
 
   app.innerHTML = `
     <div class="ticker">
@@ -442,6 +484,7 @@ function renderRound(){
     </div>
 
     ${guessBlocks}
+    ${!allLocked ? `<p class="hint">Any text still typed (even if not clicked "Submit") will still be captured when you hit Reveal — but locking each guess in first prevents accidental edits.</p>` : ''}
 
     <div class="footer-actions">
       <button class="primary" onclick="revealRound()">Reveal prompt & score round →</button>
@@ -450,21 +493,30 @@ function renderRound(){
   updateTimerUI();
 }
 
-function guessLocked(roundIdx, teamIdx){
-  return !!state.guesses[roundIdx][teamIdx] && state.guesses[roundIdx][teamIdx].__locked;
-}
-
 function submitGuess(teamIdx){
   const el = document.getElementById('guess-' + teamIdx);
   const val = el ? el.value : '';
-  const wrapped = new String(val);
-  wrapped.__locked = true;
-  state.guesses[state.currentRound][teamIdx] = wrapped;
+  state.guesses[state.currentRound][teamIdx] = { text: val, locked: true };
   render();
+}
+
+function captureUnlockedGuesses(){
+  // Safety net: whatever is currently typed in any still-open textarea gets
+  // saved as that team's guess, even if the facilitator clicked Reveal
+  // without pressing that team's individual Submit button first.
+  state.teams.forEach((t, i) => {
+    const g = state.guesses[state.currentRound][i];
+    if (!g.locked){
+      const el = document.getElementById('guess-' + i);
+      const val = el ? el.value : g.text;
+      state.guesses[state.currentRound][i] = { text: val, locked: true };
+    }
+  });
 }
 
 async function revealRound(){
   clearInterval(state.timerHandle);
+  captureUnlockedGuesses();
   state.screen = 'reveal';
   state.revealResults = { loading: true };
   render();
@@ -472,7 +524,7 @@ async function revealRound(){
   const r = state.rounds[state.currentRound];
   const results = [];
   for (let i = 0; i < state.teams.length; i++){
-    const guess = String(state.guesses[state.currentRound][i] || '');
+    const guess = state.guesses[state.currentRound][i].text || '';
     const res = await scoreGuess(guess, r.prompt);
     results.push(res);
     state.scores[i] += res.score;

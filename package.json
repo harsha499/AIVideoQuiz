@@ -1,0 +1,16 @@
+{
+  "name": "video-quiz-app",
+  "version": "1.0.0",
+  "description": "Reverse Video Challenge quiz app with a small backend proxy for AI-powered scoring",
+  "main": "server.js",
+  "scripts": {
+    "build": "echo \"No build step required\"",
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
